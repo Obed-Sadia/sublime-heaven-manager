@@ -1,5 +1,5 @@
 import streamlit as st
-from supabase import create_client, Client
+from supabase import create_client
 import pandas as pd
 import plotly.express as px
 from datetime import datetime
@@ -17,12 +17,10 @@ def init_connection():
 
 supabase = init_connection()
 
-# --- AUTHENTIFICATION SIMPLE ---
+# --- AUTHENTIFICATION ---
 def check_password():
-    """Retourne True si l'utilisateur est connecté."""
     if "authenticated" not in st.session_state:
         st.session_state.authenticated = False
-
     if not st.session_state.authenticated:
         password = st.text_input("🔒 Mot de passe", type="password")
         if st.button("Se connecter"):
@@ -37,190 +35,201 @@ def check_password():
 if not check_password():
     st.stop()
 
-# --- FONCTIONS UTILITAIRES ---
+# --- FONCTIONS DONNÉES ---
 def get_inventory():
-    response = supabase.table("inventory").select("*").execute()
+    response = supabase.table("inventory").select("*").order('id').execute()
     return pd.DataFrame(response.data)
 
 def get_orders():
-    # On joint les tables pour avoir le nom du produit
-    response = supabase.table("orders").select("*, inventory(product_name)").execute()
+    response = supabase.table("orders").select("*, inventory(product_name)").order('created_at', desc=True).execute()
     data = response.data
-    # Aplatir le JSON retourné
     for row in data:
-        if row['inventory']:
-            row['product_name'] = row['inventory']['product_name']
-        else:
-            row['product_name'] = "Produit Supprimé"
+        row['product_name'] = row['inventory']['product_name'] if row['inventory'] else "Produit Inconnu"
     return pd.DataFrame(data)
+
+def get_pending_web_orders():
+    # On récupère uniquement les commandes qui viennent du site web
+    response = supabase.table("orders")\
+        .select("*, inventory(product_name, quantity, buy_price_cfa)")\
+        .eq("status", "En attente Web")\
+        .order('created_at', desc=True)\
+        .execute()
+    return response.data
 
 # --- INTERFACE ---
 st.sidebar.title("Sublime Heaven 💄")
-page = st.sidebar.radio("Navigation", ["📝 Opérations (Vente)", "📦 Stocks", "📊 Analytics (Canada)"])
+page = st.sidebar.radio("Navigation", ["📝 Opérations (Journée)", "📦 Stocks", "📊 Analytics"])
 
-# --- PAGE 1 : OPÉRATIONS (VUE SŒUR) ---
-if page == "📝 Opérations (Vente)":
-    st.header("Nouvelle Vente / Dépense")
+# --- PAGE 1 : OPÉRATIONS ---
+if page == "📝 Opérations (Journée)":
+    st.header("Gestion Quotidienne")
     
-    tab1, tab2 = st.tabs(["🛒 Enregistrer Vente", "💸 Sortie Caisse"])
+    # On récupère les commandes web en attente
+    pending_orders = get_pending_web_orders()
+    count_pending = len(pending_orders)
     
-    # --- Formulaire Vente ---
-    with tab1:
-        # Chargement des produits pour le selectbox
+    # Création des onglets (On ajoute l'onglet WEB en premier s'il y a des commandes)
+    tab_labels = [f"🌐 Commandes Web ({count_pending})", "🛒 Vente Manuelle", "💸 Dépenses"]
+    tab_web, tab_manual, tab_expense = st.tabs(tab_labels)
+    
+    # --- ONGLET 1 : COMMANDES WEB (NOUVEAU !) ---
+    with tab_web:
+        if count_pending == 0:
+            st.info("Aucune commande en attente depuis le site web.")
+        else:
+            st.warning(f"⚠️ Vous avez {count_pending} commandes à valider !")
+            
+            for order in pending_orders:
+                # Carte visuelle pour chaque commande
+                with st.expander(f"{order['created_at'][:10]} | {order['customer_phone']} | {order['inventory']['product_name']}", expanded=True):
+                    c1, c2, c3 = st.columns(3)
+                    
+                    prod_name = order['inventory']['product_name']
+                    qty_sold = order['quantity_sold']
+                    current_stock = order['inventory']['quantity']
+                    buy_price = order['inventory']['buy_price_cfa'] # Pour historique marge
+                    
+                    c1.write(f"**Produit:** {prod_name}")
+                    c1.write(f"**Quantité:** {qty_sold}")
+                    c2.write(f"**Client:** {order['customer_phone']}")
+                    c2.write(f"**Source:** {order['marketing_source']}")
+                    
+                    # Vérification du stock avant validation
+                    stock_ok = current_stock >= qty_sold
+                    if stock_ok:
+                        c3.success(f"Stock dispo : {current_stock}")
+                        if c3.button("✅ VALIDER & LIVRER", key=f"btn_{order['id']}"):
+                            try:
+                                # 1. Déduire le stock
+                                supabase.table("inventory").update({"quantity": current_stock - qty_sold}).eq("id", order['product_id']).execute()
+                                
+                                # 2. Mettre à jour la commande (Statut + Prix d'achat historique)
+                                supabase.table("orders").update({
+                                    "status": "Livré",
+                                    "unit_buy_cost_at_sale": buy_price 
+                                }).eq("id", order['id']).execute()
+                                
+                                st.toast("Commande validée avec succès !")
+                                st.rerun() # Rafraîchir la page
+                            except Exception as e:
+                                st.error(f"Erreur : {e}")
+                    else:
+                        c3.error(f"Stock insuffisant ({current_stock})")
+                        if c3.button("❌ ANNULER COMMANDE", key=f"cancel_{order['id']}"):
+                            supabase.table("orders").update({"status": "Annulé (Stock)"}).eq("id", order['id']).execute()
+                            st.rerun()
+
+    # --- ONGLET 2 : VENTE MANUELLE (Ton ancien code) ---
+    with tab_manual:
         df_inv = get_inventory()
         if not df_inv.empty:
             active_products = df_inv[df_inv['quantity'] > 0]
             product_options = {row['product_name']: row for index, row in active_products.iterrows()}
             
             with st.form("sell_form"):
-                st.info("Saisir les détails de la commande")
+                st.write("Saisir une vente faite par téléphone/WhatsApp (hors site)")
                 col1, col2 = st.columns(2)
                 with col1:
-                    phone = st.text_input("Téléphone Client (ID)", placeholder="0707...")
+                    phone = st.text_input("Téléphone Client", placeholder="0707...")
                     product_name = st.selectbox("Produit", list(product_options.keys()))
-                    source = st.selectbox("Source Marketing", ["Facebook", "TikTok", "Instagram", "Bouche à oreille", "Site Web (Direct)"])
+                    source = st.selectbox("Source", ["Appel Direct", "Bouche à oreille", "Inconnu"])
                 with col2:
                     qty = st.number_input("Quantité", min_value=1, value=1)
-                    # Calcul prix auto
                     selected_prod = product_options[product_name] if product_name else None
                     unit_price = selected_prod['sell_price_cfa'] if selected_prod is not None else 0
                     manual_price = st.number_input("Prix Total (CFA)", value=int(unit_price * qty))
                 
-                submitted = st.form_submit_button("✅ Valider la vente")
+                submitted = st.form_submit_button("Enregistrer Vente Manuelle")
                 
                 if submitted:
                     if not phone:
-                        st.error("Le numéro de téléphone est obligatoire.")
+                        st.error("Téléphone obligatoire.")
                     else:
                         try:
-                            # Appel de la fonction RPC (Transaction Atomique)
+                            # Utilisation de la RPC pour vente manuelle directe
                             prod_id = int(selected_prod['id'])
                             response = supabase.rpc("process_sale", {
-                                "p_phone": phone,
-                                "p_product_id": prod_id,
-                                "p_qty": int(qty),
-                                "p_total": int(manual_price),
+                                "p_phone": phone, "p_product_id": prod_id,
+                                "p_qty": int(qty), "p_total": int(manual_price),
                                 "p_source": source
                             }).execute()
-                            
-                            result = response.data
-                            if result['success']:
-                                st.success(f"Vente enregistrée ! Stock restant : {selected_prod['quantity'] - qty}")
-                                # Petit hack pour vider le cache et recharger le stock frais
+                            if response.data['success']:
+                                st.success("Vente enregistrée !")
                                 st.cache_data.clear()
                             else:
-                                st.error(f"Erreur : {result['message']}")
+                                st.error(response.data['message'])
                         except Exception as e:
-                            st.error(f"Erreur de connexion : {e}")
-        else:
-            st.warning("Aucun produit en stock. Ajoutez-en dans l'onglet Stocks.")
+                            st.error(f"Erreur : {e}")
 
-    # --- Formulaire Dépense ---
-    with tab2:
+    # --- ONGLET 3 : DÉPENSES ---
+    with tab_expense:
         with st.form("expense_form"):
             cat = st.selectbox("Catégorie", ["Transport", "Internet/Data", "Emballage", "Marketing", "Autre"])
             montant = st.number_input("Montant (CFA)", min_value=0)
-            desc = st.text_input("Description (facultatif)")
-            submit_expense = st.form_submit_button("Enregistrer Dépense")
-            
-            if submit_expense:
-                try:
-                    supabase.table("cashflow").insert({
-                        "type": "SORTIE",
-                        "category": cat,
-                        "amount_cfa": montant,
-                        "description": desc,
-                        "date": datetime.now(pytz.utc).isoformat()
-                    }).execute()
-                    st.success("Dépense enregistrée.")
-                except Exception as e:
-                    st.error(f"Erreur : {e}")
+            desc = st.text_input("Description")
+            if st.form_submit_button("Enregistrer Dépense"):
+                supabase.table("cashflow").insert({
+                    "type": "SORTIE", "category": cat,
+                    "amount_cfa": montant, "description": desc,
+                    "date": datetime.now(pytz.utc).isoformat()
+                }).execute()
+                st.success("Dépense notée.")
 
 # --- PAGE 2 : STOCKS ---
 elif page == "📦 Stocks":
     st.header("État des Stocks")
-    
-    # 1. Ajout de Stock
-    with st.expander("➕ Réapprovisionner / Nouveau Produit"):
+    with st.expander("➕ Réapprovisionnement"):
         with st.form("add_stock"):
-            new_name = st.text_input("Nom du produit")
+            new_name = st.text_input("Nom du produit (Ex: Savon Noir)")
             c1, c2, c3 = st.columns(3)
             new_qty = c1.number_input("Quantité Ajoutée", min_value=1)
-            buy_p = c2.number_input("Prix Achat Unitaire", min_value=0)
-            sell_p = c3.number_input("Prix Vente Unitaire", min_value=0)
+            buy_p = c2.number_input("Prix Achat (Coût)", min_value=0)
+            sell_p = c3.number_input("Prix Vente (Cible)", min_value=0)
             
-            if st.form_submit_button("Ajouter au Stock"):
-                # Logique simplifiée: ici on insère juste. 
-                # Pour un vrai système, il faudrait vérifier si le produit existe déjà et faire un UPDATE.
-                supabase.table("inventory").insert({
-                    "product_name": new_name,
-                    "quantity": new_qty,
-                    "buy_price_cfa": buy_p,
-                    "sell_price_cfa": sell_p
-                }).execute()
-                st.success("Stock mis à jour.")
+            if st.form_submit_button("Ajouter Stock"):
+                # Vérifier si produit existe déjà (par nom simple)
+                existing = supabase.table("inventory").select("*").ilike("product_name", new_name).execute()
+                if existing.data:
+                    # Update
+                    pid = existing.data[0]['id']
+                    old_qty = existing.data[0]['quantity']
+                    supabase.table("inventory").update({
+                        "quantity": old_qty + new_qty,
+                        "buy_price_cfa": buy_p, "sell_price_cfa": sell_p
+                    }).eq("id", pid).execute()
+                    st.success(f"Stock mis à jour pour {new_name}")
+                else:
+                    # Insert
+                    supabase.table("inventory").insert({
+                        "product_name": new_name, "quantity": new_qty,
+                        "buy_price_cfa": buy_p, "sell_price_cfa": sell_p
+                    }).execute()
+                    st.success(f"Nouveau produit créé : {new_name}")
                 st.cache_data.clear()
 
-    # 2. Visualisation
     df = get_inventory()
     if not df.empty:
-        # Mise en forme conditionnelle
-        def highlight_low_stock(val):
-            color = 'red' if val < 5 else 'black' # Seuil en dur ici, à améliorer
-            return f'color: {color}'
+        st.dataframe(df, use_container_width=True)
 
-        st.dataframe(
-            df.style.map(highlight_low_stock, subset=['quantity']),
-            use_container_width=True,
-            column_config={
-                "product_name": "Produit",
-                "quantity": "Stock",
-                "buy_price_cfa": "P. Achat",
-                "sell_price_cfa": "P. Vente"
-            }
-        )
-    else:
-        st.info("Inventaire vide.")
-
-# --- PAGE 3 : ANALYTICS (CANADA) ---
-elif page == "📊 Analytics (Canada)":
-    st.header("Tableau de Bord Stratégique")
-    
+# --- PAGE 3 : ANALYTICS ---
+elif page == "📊 Analytics":
+    st.header("Tableau de Bord")
     df_orders = get_orders()
-    
     if not df_orders.empty:
-        # Conversion dates
         df_orders['created_at'] = pd.to_datetime(df_orders['created_at'])
+        # On ne compte que les ventes LIVRÉES pour le vrai CA
+        df_delivered = df_orders[df_orders['status'] == 'Livré'].copy()
         
-        # KPIs
-        total_ca = df_orders['total_amount_cfa'].sum()
-        # Calcul marge approximatif (Vente - Coût d'achat enregistré)
-        # Note: Si unit_buy_cost_at_sale est null (vieux data), on assume 0 pour éviter crash
-        df_orders['margin'] = df_orders['total_amount_cfa'] - (df_orders['unit_buy_cost_at_sale'].fillna(0) * df_orders['quantity_sold'])
-        total_profit = df_orders['margin'].sum()
+        ca = df_delivered['total_amount_cfa'].sum()
+        count = len(df_delivered)
         
-        c1, c2, c3 = st.columns(3)
-        c1.metric("Chiffre d'Affaires", f"{total_ca:,.0f} CFA")
-        c2.metric("Marge Brute (Est.)", f"{total_profit:,.0f} CFA")
-        c3.metric("Commandes", len(df_orders))
+        c1, c2 = st.columns(2)
+        c1.metric("Chiffre d'Affaires (Validé)", f"{ca:,.0f} CFA")
+        c2.metric("Ventes Validées", count)
         
         st.divider()
-        
-        # Graphiques Marketing
-        col_graph1, col_graph2 = st.columns(2)
-        
-        with col_graph1:
-            st.subheader("Performance par Source")
-            fig_pie = px.pie(df_orders, names='marketing_source', values='total_amount_cfa', title="CA par Source Marketing")
-            st.plotly_chart(fig_pie, use_container_width=True)
-            
-        with col_graph2:
-            st.subheader("Ventes dans le temps")
-            # Grouper par jour
-            daily_sales = df_orders.groupby(df_orders['created_at'].dt.date)['total_amount_cfa'].sum().reset_index()
-            fig_bar = px.bar(daily_sales, x='created_at', y='total_amount_cfa', title="Évolution Journalière")
-            st.plotly_chart(fig_bar, use_container_width=True)
-
+        st.subheader("Ventes par Source")
+        fig = px.pie(df_delivered, names='marketing_source', values='total_amount_cfa')
+        st.plotly_chart(fig)
     else:
-        st.info("Aucune donnée de vente pour le moment.")
-        
+        st.info("Pas encore de données.")
