@@ -74,53 +74,69 @@ if page == "📝 Opérations (Journée)":
     tab_labels = [f"🌐 Commandes Web ({count_pending})", "🛒 Vente Manuelle", "💸 Dépenses"]
     tab_web, tab_manual, tab_expense = st.tabs(tab_labels)
     
-    # --- ONGLET 1 : COMMANDES WEB (NOUVEAU !) ---
+    # --- ONGLET 1 : COMMANDES WEB ---
     with tab_web:
         if count_pending == 0:
             st.info("Aucune commande en attente depuis le site web.")
         else:
-            st.warning(f"⚠️ Vous avez {count_pending} commandes à valider !")
+            st.warning(f"⚠️ Vous avez {count_pending} commandes web à traiter !")
             
             for order in pending_orders:
-                # Carte visuelle pour chaque commande
-                with st.expander(f"{order['created_at'][:10]} | {order['customer_phone']} | {order['inventory']['product_name']}", expanded=True):
-                    c1, c2, c3 = st.columns(3)
+                # Cadre visuel
+                with st.expander(f"{order['created_at'][:16]} | {order['inventory']['product_name']} | {order['marketing_source']}", expanded=True):
+                    
+                    # Colonnes d'information
+                    c1, c2, c3 = st.columns([2, 2, 3])
                     
                     prod_name = order['inventory']['product_name']
                     qty_sold = order['quantity_sold']
                     current_stock = order['inventory']['quantity']
-                    buy_price = order['inventory']['buy_price_cfa'] # Pour historique marge
+                    buy_price = order['inventory']['buy_price_cfa']
                     
-                    c1.write(f"**Produit:** {prod_name}")
-                    c1.write(f"**Quantité:** {qty_sold}")
-                    c2.write(f"**Client:** {order['customer_phone']}")
-                    c2.write(f"**Source:** {order['marketing_source']}")
-                    
-                    # Vérification du stock avant validation
-                    stock_ok = current_stock >= qty_sold
-                    if stock_ok:
-                        c3.success(f"Stock dispo : {current_stock}")
-                        if c3.button("✅ VALIDER & LIVRER", key=f"btn_{order['id']}"):
-                            try:
-                                # 1. Déduire le stock
-                                supabase.table("inventory").update({"quantity": current_stock - qty_sold}).eq("id", order['product_id']).execute()
-                                
-                                # 2. Mettre à jour la commande (Statut + Prix d'achat historique)
-                                supabase.table("orders").update({
-                                    "status": "Livré",
-                                    "unit_buy_cost_at_sale": buy_price 
-                                }).eq("id", order['id']).execute()
-                                
-                                st.toast("Commande validée avec succès !")
-                                st.rerun() # Rafraîchir la page
-                            except Exception as e:
-                                st.error(f"Erreur : {e}")
-                    else:
-                        c3.error(f"Stock insuffisant ({current_stock})")
-                        if c3.button("❌ ANNULER COMMANDE", key=f"cancel_{order['id']}"):
-                            supabase.table("orders").update({"status": "Annulé (Stock)"}).eq("id", order['id']).execute()
-                            st.rerun()
+                    with c1:
+                        st.write(f"**Produit:** {prod_name}")
+                        st.write(f"**Quantité:** {qty_sold}")
+                        st.caption(f"Stock actuel: {current_stock}")
 
+                    with c2:
+                        st.write(f"**Client:** {order['customer_phone']}")
+                        # On affiche la source en GRAS pour que tu saches d'où ça vient
+                        st.write(f"**Source:** :blue[{order['marketing_source']}]")
+                    
+                    with c3:
+                        st.write("**Action à prendre :**")
+                        col_btn_val, col_btn_cancel = st.columns(2)
+                        
+                        # --- BOUTON VALIDER (VERT) ---
+                        if col_btn_val.button("✅ VALIDER", key=f"val_{order['id']}", type="primary"):
+                            if current_stock >= qty_sold:
+                                try:
+                                    # 1. Déduire Stock
+                                    supabase.table("inventory").update({"quantity": current_stock - qty_sold}).eq("id", order['product_id']).execute()
+                                    # 2. Valider Commande
+                                    supabase.table("orders").update({
+                                        "status": "Livré",
+                                        "unit_buy_cost_at_sale": buy_price 
+                                    }).eq("id", order['id']).execute()
+                                    st.success("Validé !")
+                                    st.rerun()
+                                except Exception as e:
+                                    st.error(f"Erreur: {e}")
+                            else:
+                                st.error("Stock insuffisant !")
+
+                        # --- BOUTON ANNULER (ROUGE) ---
+                        if col_btn_cancel.button("❌ ANNULER", key=f"can_{order['id']}"):
+                            try:
+                                # On change juste le statut, ON NE TOUCHE PAS AU STOCK
+                                supabase.table("orders").update({
+                                    "status": "Annulé (Client)"
+                                }).eq("id", order['id']).execute()
+                                st.warning("Commande annulée.")
+                                st.rerun()
+                            except Exception as e:
+                                st.error(f"Erreur: {e}")
+                                
     # --- ONGLET 2 : VENTE MANUELLE (Ton ancien code) ---
     with tab_manual:
         df_inv = get_inventory()
