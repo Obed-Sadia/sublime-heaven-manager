@@ -48,10 +48,12 @@ def get_orders():
     return pd.DataFrame(data)
 
 def get_pending_web_orders():
-    # On récupère uniquement les commandes qui viennent du site web
+    # MODIFICATION : On récupère tout ce qui n'est pas terminé
+    # Cela inclut "En attente", "En attente Web", "Nouveau", etc.
     response = supabase.table("orders")\
         .select("*, inventory(product_name, quantity, buy_price_cfa)")\
-        .eq("status", "En attente Web")\
+        .neq("status", "Livré")\
+        .neq("status", "Annulé (Stock)")\
         .order('created_at', desc=True)\
         .execute()
     return response.data
