@@ -1,0 +1,13 @@
+# Fichiers de configuration secrets
+.streamlit/secrets.toml
+
+# Fichiers système et cache Python (inutiles sur le serveur)
+__pycache__/
+*.py[cod]
+.DS_Store
+venv/
+.env
+.env/
+
+env
+env/
