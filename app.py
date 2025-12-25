@@ -194,40 +194,129 @@ if page == "📝 Opérations (Journée)":
                 st.success("Dépense notée.")
 
 # --- PAGE 2 : STOCKS ---
+# --- PAGE 2 : STOCKS & GESTION ---
 elif page == "📦 Stocks":
-    st.header("État des Stocks")
-    with st.expander("➕ Réapprovisionnement"):
-        with st.form("add_stock"):
-            new_name = st.text_input("Nom du produit (Ex: Savon Noir)")
-            c1, c2, c3 = st.columns(3)
-            new_qty = c1.number_input("Quantité Ajoutée", min_value=1)
-            buy_p = c2.number_input("Prix Achat (Coût)", min_value=0)
-            sell_p = c3.number_input("Prix Vente (Cible)", min_value=0)
-            
-            if st.form_submit_button("Ajouter Stock"):
-                # Vérifier si produit existe déjà (par nom simple)
-                existing = supabase.table("inventory").select("*").ilike("product_name", new_name).execute()
-                if existing.data:
-                    # Update
-                    pid = existing.data[0]['id']
-                    old_qty = existing.data[0]['quantity']
-                    supabase.table("inventory").update({
-                        "quantity": old_qty + new_qty,
-                        "buy_price_cfa": buy_p, "sell_price_cfa": sell_p
-                    }).eq("id", pid).execute()
-                    st.success(f"Stock mis à jour pour {new_name}")
-                else:
-                    # Insert
-                    supabase.table("inventory").insert({
-                        "product_name": new_name, "quantity": new_qty,
-                        "buy_price_cfa": buy_p, "sell_price_cfa": sell_p
-                    }).execute()
-                    st.success(f"Nouveau produit créé : {new_name}")
-                st.cache_data.clear()
-
+    st.header("Gestion de l'Inventaire")
+    
+    # 1. Récupération des données fraîches
     df = get_inventory()
+    
+    # --- TABLEAU DE BORD VISUEL ---
     if not df.empty:
-        st.dataframe(df, use_container_width=True)
+        # On affiche d'abord le tableau pour avoir une vue d'ensemble
+        st.dataframe(
+            df, 
+            use_container_width=True,
+            column_config={
+                "id": "Code (SKU)",
+                "product_name": "Produit",
+                "quantity": "Stock",
+                "buy_price_cfa": st.column_config.NumberColumn("Prix Achat", format="%d CFA"),
+                "sell_price_cfa": st.column_config.NumberColumn("Prix Vente", format="%d CFA"),
+            }
+        )
+    else:
+        st.info("Votre inventaire est vide.")
+
+    st.divider()
+
+    # --- ZONE D'ACTION ---
+    st.subheader("Action sur le stock")
+    
+    # Choix du mode de travail
+    mode = st.radio("Que voulez-vous faire ?", ["✏️ Modifier / Supprimer un produit", "➕ Créer un nouveau produit"], horizontal=True)
+
+    # --- MODE 1 : MODIFIER / SUPPRIMER ---
+    if mode == "✏️ Modifier / Supprimer un produit":
+        if df.empty:
+            st.warning("Rien à modifier.")
+        else:
+            # Liste déroulante intelligente : "Code - Nom du produit"
+            product_list = [f"{row['id']} - {row['product_name']}" for index, row in df.iterrows()]
+            selected_product_str = st.selectbox("Sélectionnez le produit à gérer", product_list)
+            
+            # On extrait l'ID (la partie avant le tiret)
+            selected_id = selected_product_str.split(" - ")[0]
+            
+            # On récupère les infos actuelles de ce produit pour pré-remplir le formulaire
+            current_data = df[df['id'] == selected_id].iloc[0]
+
+            with st.form("edit_form"):
+                st.caption(f"Modification de : **{current_data['product_name']}** (Code: {selected_id})")
+                
+                # Champs modifiables
+                new_name = st.text_input("Nom du Produit", value=current_data['product_name'])
+                
+                c1, c2, c3 = st.columns(3)
+                new_qty = c1.number_input("Stock Actuel", value=int(current_data['quantity']), step=1)
+                new_buy = c2.number_input("Prix Achat (Coût)", value=int(current_data['buy_price_cfa']), step=500)
+                new_sell = c3.number_input("Prix Vente (Client)", value=int(current_data['sell_price_cfa']), step=500)
+                
+                col_save, col_del = st.columns([1, 1])
+                
+                # BOUTON SAUVEGARDER
+                if col_save.form_submit_button("💾 Enregistrer les changements", type="primary"):
+                    try:
+                        supabase.table("inventory").update({
+                            "product_name": new_name,
+                            "quantity": new_qty,
+                            "buy_price_cfa": new_buy,
+                            "sell_price_cfa": new_sell
+                        }).eq("id", selected_id).execute()
+                        st.success(f"Produit {selected_id} mis à jour !")
+                        st.cache_data.clear() # Force le rechargement
+                        st.rerun()
+                    except Exception as e:
+                        st.error(f"Erreur : {e}")
+
+                # BOUTON SUPPRIMER
+                if col_del.form_submit_button("🗑️ SUPPRIMER DÉFINITIVEMENT", type="secondary"):
+                    try:
+                        supabase.table("inventory").delete().eq("id", selected_id).execute()
+                        st.warning(f"Produit {selected_id} supprimé.")
+                        st.cache_data.clear()
+                        st.rerun()
+                    except Exception as e:
+                        # Message d'erreur spécifique si le produit a déjà été vendu
+                        st.error("Impossible de supprimer ce produit car il apparaît dans l'historique des ventes (Commandes).")
+                        st.info("💡 Conseil : Au lieu de le supprimer, mettez son stock à 0 et ajoutez '(OBSOLÈTE)' à son nom.")
+
+    # --- MODE 2 : CRÉER NOUVEAU ---
+    elif mode == "➕ Créer un nouveau produit":
+        with st.form("add_form"):
+            st.write("Ajout d'une nouvelle référence au catalogue")
+            
+            c_code, c_name = st.columns([1, 3])
+            new_id = c_code.text_input("Code (Ex: PR015)", placeholder="PR...")
+            new_name = c_name.text_input("Nom du produit", placeholder="Ex: Nouveau Savon")
+            
+            c1, c2, c3 = st.columns(3)
+            new_qty = c1.number_input("Stock de départ", min_value=0, value=0)
+            new_buy = c2.number_input("Prix Achat", min_value=0, value=0)
+            new_sell = c3.number_input("Prix Vente", min_value=0, value=0)
+            
+            if st.form_submit_button("Créer le produit"):
+                if new_id and new_name:
+                    try:
+                        # Vérifier si l'ID existe déjà
+                        existing = supabase.table("inventory").select("id").eq("id", new_id).execute()
+                        if existing.data:
+                            st.error(f"Erreur : Le code '{new_id}' existe déjà !")
+                        else:
+                            supabase.table("inventory").insert({
+                                "id": new_id,
+                                "product_name": new_name,
+                                "quantity": new_qty,
+                                "buy_price_cfa": new_buy,
+                                "sell_price_cfa": new_sell
+                            }).execute()
+                            st.success(f"Produit {new_name} créé avec succès !")
+                            st.cache_data.clear()
+                            st.rerun()
+                    except Exception as e:
+                        st.error(f"Erreur : {e}")
+                else:
+                    st.warning("Le Code et le Nom sont obligatoires.")
 
 # --- PAGE 3 : ANALYTICS ---
 elif page == "📊 Analytics":
