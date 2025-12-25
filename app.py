@@ -165,7 +165,7 @@ if page == "📝 Opérations (Journée)":
                     else:
                         try:
                             # Utilisation de la RPC pour vente manuelle directe
-                            prod_id = int(selected_prod['id'])
+                            prod_id = selected_prod['id']
                             response = supabase.rpc("process_sale", {
                                 "p_phone": phone, "p_product_id": prod_id,
                                 "p_qty": int(qty), "p_total": int(manual_price),
