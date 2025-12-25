@@ -263,7 +263,7 @@ elif page == "📦 Stocks":
                             "buy_price_cfa": new_buy,
                             "sell_price_cfa": new_sell
                         }).eq("id", selected_id).execute()
-                        st.success(f"Produit {selected_id} mis à jour !")
+                        st.success(f"Produit {selected_id} mis à jour!")
                         st.cache_data.clear() # Force le rechargement
                         st.rerun()
                     except Exception as e:
