@@ -505,7 +505,7 @@ elif page == "🤖 Assistant IA":
                         """
                         
                         # 2. Appel à Gemini 
-                        model = genai.GenerativeModel('gemini-2.0-flash')
+                        model = genai.GenerativeModel('gemini-2.0-flash-lite-preview-02-05')
                         response = model.generate_content(prompt)
                         
                         # 3. Nettoyage
@@ -559,7 +559,7 @@ elif page == "🤖 Assistant IA":
                     base_prompt += f"\nIntègre cette tendance/info : {context_perplexity}"
 
                 
-                model = genai.GenerativeModel('gemini-2.0-flash') 
+                model = genai.GenerativeModel('gemini-2.0-flash-lite-preview-02-05') 
                 response_market = model.generate_content(base_prompt)
                 
                 st.markdown(response_market.text)
