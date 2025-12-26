@@ -242,7 +242,7 @@ if page == "📝 Opérations":
                 }).execute()
                 st.success("Dépense notée.")
 
-# --- PAGE 2 : STOCKS ---
+
 # --- PAGE 2 : STOCKS & GESTION ---
 elif page == "📦 Stocks":
     st.header("Gestion de l'Inventaire")
