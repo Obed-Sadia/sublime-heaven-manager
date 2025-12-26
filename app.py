@@ -4,6 +4,8 @@ import pandas as pd
 import plotly.express as px
 from datetime import datetime
 import pytz
+import plotly.express as px
+import plotly.graph_objects as go
 
 # --- CONFIGURATION & SETUP ---
 st.set_page_config(page_title="Gestion Sublime Heaven", page_icon="💄", layout="wide")
@@ -320,23 +322,88 @@ elif page == "📦 Stocks":
 
 # --- PAGE 3 : ANALYTICS ---
 elif page == "📊 Analytics":
-    st.header("Tableau de Bord")
-    df_orders = get_orders()
+    st.title("Tableau de Bord Stratégique 🚀")
+    
+    # 1. CHARGEMENT DES DONNÉES
+    # On récupère les commandes
+    df_orders = get_orders() # Ta fonction existante
+    
+    # On récupère le trafic (Nouvelle requête)
+    traffic_response = supabase.table("site_traffic").select("*").execute()
+    df_traffic = pd.DataFrame(traffic_response.data)
+
+    # --- SECTION 1 : KPIs GLOBAUX ---
+    st.subheader("Performance Globale")
+    
     if not df_orders.empty:
+        # Calculs Financiers
         df_orders['created_at'] = pd.to_datetime(df_orders['created_at'])
-        # On ne compte que les ventes LIVRÉES pour le vrai CA
-        df_delivered = df_orders[df_orders['status'] == 'Livré'].copy()
         
-        ca = df_delivered['total_amount_cfa'].sum()
-        count = len(df_delivered)
+        # Commandes Validées (L'argent réel)
+        df_valide = df_orders[df_orders['status'] == 'Livré']
+        ca_reel = df_valide['total_amount_cfa'].sum()
         
-        c1, c2 = st.columns(2)
-        c1.metric("Chiffre d'Affaires (Validé)", f"{ca:,.0f} CFA")
-        c2.metric("Ventes Validées", count)
+        # Commandes Totales (Le volume)
+        ca_total = df_orders['total_amount_cfa'].sum()
+        nb_total = len(df_orders)
         
-        st.divider()
-        st.subheader("Ventes par Source")
-        fig = px.pie(df_delivered, names='marketing_source', values='total_amount_cfa')
-        st.plotly_chart(fig)
+        # Taux de Conversion (Commandes / Visiteurs Uniques)
+        nb_visiteurs = len(df_traffic) if not df_traffic.empty else 1 # Évite division par 0
+        taux_conv = (nb_total / nb_visiteurs) * 100
+        
+        kpi1, kpi2, kpi3, kpi4 = st.columns(4)
+        kpi1.metric("Chiffre d'Affaires (Encaissé)", f"{ca_reel:,.0f} CFA", delta="Net Revenue")
+        kpi2.metric("Volume de Commandes", f"{nb_total}", help="Toutes commandes confondues")
+        kpi3.metric("Visiteurs Totaux", f"{nb_visiteurs}", help="Basé sur les logs")
+        kpi4.metric("Taux de Conversion", f"{taux_conv:.2f} %")
+
+    st.divider()
+
+    # --- SECTION 2 : ANALYSE DES VENTES ---
+    c1, c2 = st.columns(2)
+    
+    with c1:
+        st.subheader("🏆 Top Produits")
+        if not df_orders.empty:
+            # On groupe par nom de produit et on somme les quantités
+            top_products = df_orders.groupby('product_name')['quantity_sold'].sum().reset_index()
+            fig_prod = px.bar(top_products, x='quantity_sold', y='product_name', orientation='h', 
+                              title="Unités Vendues par Produit", color='quantity_sold')
+            st.plotly_chart(fig_prod, use_container_width=True)
+
+    with c2:
+        st.subheader("📦 Statut des Commandes")
+        if not df_orders.empty:
+            status_counts = df_orders['status'].value_counts().reset_index()
+            status_counts.columns = ['Statut', 'Nombre']
+            fig_status = px.pie(status_counts, values='Nombre', names='Statut', hole=0.4, 
+                                color='Statut', color_discrete_map={'Livré':'green', 'Annulé (Client)':'red', 'En attente Web':'orange'})
+            st.plotly_chart(fig_status, use_container_width=True)
+
+    # --- SECTION 3 : TRAFIC & MARKETING ---
+    st.divider()
+    st.subheader("🕵️ Analyse du Trafic & Sources")
+    
+    if not df_traffic.empty:
+        t1, t2 = st.columns(2)
+        
+        with t1:
+            st.markdown("**📍 D'où viennent tes visiteurs ?**")
+            source_counts = df_traffic['source'].value_counts().reset_index()
+            fig_source = px.pie(source_counts, values='count', names='source', title="Sources de Trafic")
+            st.plotly_chart(fig_source, use_container_width=True)
+            
+        with t2:
+            st.markdown("**📱 Quel appareil utilisent-ils ?**")
+            # Graphique Appareil (Mobile vs Desktop)
+            dev_counts = df_traffic['device_type'].value_counts().reset_index()
+            fig_dev = px.bar(dev_counts, x='device_type', y='count', color='device_type', title="Sessions par Appareil")
+            st.plotly_chart(fig_dev, use_container_width=True)
+
+        # Graphique OS
+        os_counts = df_traffic['os'].value_counts().reset_index()
+        fig_os = px.bar(os_counts, x='os', y='count', title="Système d'Exploitation")
+        st.plotly_chart(fig_os, use_container_width=True)
+            
     else:
-        st.info("Pas encore de données.")
+        st.info("En attente de données de trafic... (Vérifiez que le script JS est bien en place)")
