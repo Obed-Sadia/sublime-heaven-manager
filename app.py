@@ -504,8 +504,8 @@ elif page == "🤖 Assistant IA":
                         5. La variable de données s'appelle 'df'.
                         """
                         
-                        # 2. Appel à Gemini (VERSION CORRIGÉE ICI 👇)
-                        model = genai.GenerativeModel('gemini-1.5-flash-001') 
+                        # 2. Appel à Gemini 
+                        model = genai.GenerativeModel('gemini-2.0-flash')
                         response = model.generate_content(prompt)
                         
                         # 3. Nettoyage
@@ -558,8 +558,8 @@ elif page == "🤖 Assistant IA":
                 if context_perplexity:
                     base_prompt += f"\nIntègre cette tendance/info : {context_perplexity}"
 
-                # (VERSION CORRIGÉE ICI 👇)
-                model = genai.GenerativeModel('gemini-1.5-pro-001') 
+                
+                model = genai.GenerativeModel('gemini-2.0-flash') 
                 response_market = model.generate_content(base_prompt)
                 
                 st.markdown(response_market.text)
