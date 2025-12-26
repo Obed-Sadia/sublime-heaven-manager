@@ -6,6 +6,7 @@ from datetime import datetime
 import pytz
 import plotly.express as px
 import plotly.graph_objects as go
+import google.generativeai as genai
 
 # --- CONFIGURATION & SETUP ---
 st.set_page_config(page_title="Gestion Sublime Heaven", page_icon="💄", layout="wide")
@@ -453,3 +454,114 @@ elif page == "📊 Analytics":
             
     else:
         st.info("En attente de données de trafic... (Vérifiez que le script JS est bien en place)")
+        
+
+# --- PAGE 4 : ASSISTANT IA (VERSION GEMINI) ---
+elif page == "🤖 Assistant IA":
+    st.header("Ton Assistant Intelligent (Propulsé par Gemini) 💎")
+    
+    # Configuration de la clé API
+    # Ajoute ta clé dans .streamlit/secrets.toml sous [gemini] api_key = "..."
+    if "gemini" in st.secrets:
+        genai.configure(api_key=st.secrets["gemini"]["api_key"])
+    else:
+        st.error("⚠️ Clé Gemini manquante. Ajoute-la dans les secrets (.streamlit/secrets.toml).")
+        st.info("Format: [gemini] api_key = 'AIza...'")
+        st.stop()
+
+    tab_cfo, tab_cmo = st.tabs(["📊 Analyste (Talk to Data)", "🎥 Marketing (Content Factory)"])
+
+    # --- CERVEAU 1 : L'ANALYSTE (Text-to-Code) ---
+    with tab_cfo:
+        st.subheader("Posez une question à vos données")
+        st.caption("Exemples : 'Quel est le produit le plus vendu ?', 'Montre-moi les ventes par source', 'Moyenne des paniers ?'")
+        
+        df_orders = get_orders()
+        
+        user_question = st.text_area("Ta question :", placeholder="Écris ta question ici...")
+        
+        if st.button("Analyses-moi ça 🚀"):
+            if user_question and not df_orders.empty:
+                with st.spinner("Gemini réfléchit..."):
+                    try:
+                        # 1. Préparation du contexte
+                        columns_info = list(df_orders.columns)
+                        sample_data = df_orders.head(3).to_markdown()
+                        
+                        # Prompt spécifique pour Gemini
+                        prompt = f"""
+                        Tu es un expert en Data Science Python (Pandas/Plotly).
+                        Tu as accès à une DataFrame nommée 'df'.
+                        Colonnes : {columns_info}
+                        Exemple de données :
+                        {sample_data}
+                        
+                        Question : "{user_question}"
+                        
+                        Consignes STRICTES :
+                        1. Écris UNIQUEMENT le code Python exécutable. Pas de texte avant ou après.
+                        2. Pas de balises markdown (pas de ```python).
+                        3. Utilise 'st.write()' pour afficher du texte/chiffres.
+                        4. Utilise 'st.plotly_chart()' pour les graphiques (avec plotly.express as px).
+                        5. La variable de données s'appelle 'df'.
+                        """
+                        
+                        # 2. Appel à Gemini Pro
+                        model = genai.GenerativeModel('gemini-1.5-flash') # Modèle rapide et gratuit
+                        response = model.generate_content(prompt)
+                        
+                        # 3. Nettoyage du code (Gemini aime bien mettre des ``` parfois)
+                        generated_code = response.text.replace("```python", "").replace("```", "").strip()
+                        
+                        st.code(generated_code, language="python")
+                        st.divider()
+                        
+                        # 4. Exécution
+                        local_vars = {"df": df_orders, "px": px, "st": st, "pd": pd}
+                        exec(generated_code, globals(), local_vars)
+                        
+                    except Exception as e:
+                        st.error(f"Erreur : {e}")
+                        st.caption("Conseil : Sois plus précis dans ta demande.")
+
+    # --- CERVEAU 2 : LE MARKETEUR (Content Gen) ---
+    with tab_cmo:
+        st.subheader("Générateur de Scripts Viraux 📱")
+        
+        df_inv = get_inventory()
+        product_list = df_inv['product_name'].tolist()
+        selected_prod = st.selectbox("Quel produit veux-tu pousser ?", product_list)
+        
+        angle = st.selectbox("Quel angle marketing ?", [
+            "😱 Le Choc (Hook visuel)",
+            "storytelling (Témoignage émouvant)",
+            "educational (Le saviez-vous ?)",
+            "humour (Ivoirien)"
+        ])
+        
+        # Champ optionnel pour Perplexity
+        context_perplexity = st.text_area("Info Perplexity (Optionnel)", placeholder="Colle ici une info trouvée sur Perplexity (ex: Tendance TikTok du moment...)")
+
+        if st.button("Génère le script ✨"):
+            with st.spinner("Rédaction en cours..."):
+                base_prompt = f"""
+                Agis comme un expert TikTok ivoirien pour la marque 'Sublime Haven'.
+                Produit : {selected_prod}
+                Angle : {angle}
+                
+                Structure du script (30s) :
+                1. HOOK : Phrase choc.
+                2. BODY : Bénéfice produit (pas de jargon technique).
+                3. CTA : Appel à l'action.
+                
+                Ton : Amical, direct, utilisation modérée de l'argot ivoirien (Nouchi léger).
+                Utilise des emojis.
+                """
+                
+                if context_perplexity:
+                    base_prompt += f"\nIntègre cette tendance/info : {context_perplexity}"
+
+                model = genai.GenerativeModel('gemini-1.5-pro') # Modèle plus créatif
+                response_market = model.generate_content(base_prompt)
+                
+                st.markdown(response_market.text)
