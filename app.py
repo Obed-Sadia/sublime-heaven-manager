@@ -71,7 +71,7 @@ def get_all_web_orders():
 
 # --- INTERFACE ---
 st.sidebar.title("Sublime Heaven 💄")
-page = st.sidebar.radio("Navigation", ["📝 Opérations", "📦 Stocks", "📊 Analytics"])
+page = st.sidebar.radio("Navigation", ["📝 Opérations", "📦 Stocks", "📊 Analytics", "🤖 Assistant IA"])
 
 
 # --- PAGE 1 : OPÉRATIONS MODIFIÉE ---
