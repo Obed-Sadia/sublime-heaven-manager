@@ -60,85 +60,131 @@ def get_pending_web_orders():
         .execute()
     return response.data
 
+def get_all_web_orders():
+    # On récupère TOUTES les commandes web (pour l'historique et la recherche)
+    response = supabase.table("orders")\
+        .select("*, inventory(product_name, quantity, buy_price_cfa)")\
+        .order('created_at', desc=True)\
+        .execute()
+    return pd.DataFrame(response.data)
+
 # --- INTERFACE ---
 st.sidebar.title("Sublime Heaven 💄")
-page = st.sidebar.radio("Navigation", ["📝 Opérations (Journée)", "📦 Stocks", "📊 Analytics"])
+page = st.sidebar.radio("Navigation", ["📝 Opérations", "📦 Stocks", "📊 Analytics"])
 
-# --- PAGE 1 : OPÉRATIONS ---
-if page == "📝 Opérations (Journée)":
+
+# --- PAGE 1 : OPÉRATIONS MODIFIÉE ---
+if page == "📝 Opérations":
     st.header("Gestion Quotidienne")
     
-    # On récupère les commandes web en attente
-    pending_orders = get_pending_web_orders()
-    count_pending = len(pending_orders)
+    # 1. Barre de Recherche Globale
+    search_query = st.text_input("🔍 Rechercher une commande (N° Tel, Ref commande, Nom produit)", placeholder="Ex: 5656 ou 0707...")
+
+    # 2. Récupération des données
+    df_all = get_all_web_orders()
     
-    # Création des onglets (On ajoute l'onglet WEB en premier s'il y a des commandes)
-    tab_labels = [f"🌐 Commandes Web ({count_pending})", "🛒 Vente Manuelle", "💸 Dépenses"]
-    tab_web, tab_manual, tab_expense = st.tabs(tab_labels)
-    
-    # --- ONGLET 1 : COMMANDES WEB ---
-    with tab_web:
-        if count_pending == 0:
-            st.info("Aucune commande en attente depuis le site web.")
+    if not df_all.empty:
+        # Conversion dates
+        df_all['created_at'] = pd.to_datetime(df_all['created_at'])
+        
+        # --- FILTRE DE RECHERCHE ---
+        if search_query:
+            # On cherche dans le téléphone, la ref, ou le nom du produit
+            mask = (
+                df_all['customer_phone'].astype(str).str.contains(search_query, case=False) |
+                df_all['order_ref'].astype(str).str.contains(search_query, case=False) |
+                df_all['inventory'].apply(lambda x: x['product_name'] if x else '').str.contains(search_query, case=False)
+            )
+            df_display = df_all[mask]
+            st.info(f"Résultats de recherche : {len(df_display)} commande(s) trouvée(s)")
         else:
-            st.warning(f"⚠️ Vous avez {count_pending} commandes web à traiter !")
+            # Si pas de recherche, on affiche par défaut les "En attente"
+            df_display = df_all
+        
+        # Séparation des commandes (En cours vs Terminées)
+        # Note : On exclut 'Livré' et 'Annulé' pour l'onglet "A Traiter", sauf si on fait une recherche
+        if search_query:
+            pending_orders = df_display # En recherche, on montre tout ce qui matche
+        else:
+            pending_orders = df_display[~df_display['status'].isin(['Livré', 'Annulé (Client)', 'Annulé (Stock)'])]
             
-            for order in pending_orders:
-                # Cadre visuel
-                with st.expander(f"{order['created_at'][:16]} | {order['inventory']['product_name']} | {order['marketing_source']}", expanded=True):
-                    
-                    # Colonnes d'information
-                    c1, c2, c3 = st.columns([2, 2, 3])
-                    
-                    prod_name = order['inventory']['product_name']
-                    qty_sold = order['quantity_sold']
-                    current_stock = order['inventory']['quantity']
-                    buy_price = order['inventory']['buy_price_cfa']
-                    
-                    with c1:
-                        st.write(f"**Produit:** {prod_name}")
-                        st.write(f"**Quantité:** {qty_sold}")
-                        st.caption(f"Stock actuel: {current_stock}")
+        completed_orders = df_all[df_all['status'].isin(['Livré', 'Annulé (Client)', 'Annulé (Stock)'])]
 
-                    with c2:
-                        st.write(f"**Client:** {order['customer_phone']}")
-                        # On affiche la source en GRAS pour que tu saches d'où ça vient
-                        st.write(f"**Source:** :blue[{order['marketing_source']}]")
+        # --- ONGLET 1 : À TRAITER ---
+        # Calcul du nombre pour le badge
+        count_pending = len(pending_orders)
+        
+        tab_web, tab_history, tab_manual, tab_expense = st.tabs([
+            f"⚡ À Traiter ({count_pending})", 
+            "📂 Historique / Terminées",
+            "🛒 Vente Manuelle", 
+            "💸 Dépenses"
+        ])
+        
+        # --- CONTENU ONGLET À TRAITER ---
+        with tab_web:
+            if pending_orders.empty:
+                st.success("🎉 Tout est à jour ! Aucune commande en attente.")
+            else:
+                for index, order in pending_orders.iterrows():
+                    # Carte visuelle
+                    ref_display = f"#{order['order_ref']}" if order['order_ref'] else "Sans Ref"
                     
-                    with c3:
-                        st.write("**Action à prendre :**")
-                        col_btn_val, col_btn_cancel = st.columns(2)
+                    with st.expander(f"{ref_display} | {order['customer_phone']} | {order['inventory']['product_name']}", expanded=True):
+                        c1, c2, c3 = st.columns([2, 2, 3])
                         
-                        # --- BOUTON VALIDER (VERT) ---
-                        if col_btn_val.button("✅ VALIDER", key=f"val_{order['id']}", type="primary"):
-                            if current_stock >= qty_sold:
-                                try:
-                                    # 1. Déduire Stock
-                                    supabase.table("inventory").update({"quantity": current_stock - qty_sold}).eq("id", order['product_id']).execute()
-                                    # 2. Valider Commande
-                                    supabase.table("orders").update({
-                                        "status": "Livré",
-                                        "unit_buy_cost_at_sale": buy_price 
-                                    }).eq("id", order['id']).execute()
-                                    st.success("Validé !")
-                                    st.rerun()
-                                except Exception as e:
-                                    st.error(f"Erreur: {e}")
+                        prod_name = order['inventory']['product_name']
+                        qty_sold = order['quantity_sold']
+                        current_stock = order['inventory']['quantity']
+                        buy_price = order['inventory']['buy_price_cfa']
+                        
+                        with c1:
+                            st.write(f"**Produit:** {prod_name}")
+                            st.write(f"**Quantité:** {qty_sold}")
+                            if current_stock < qty_sold:
+                                st.error(f"Stock critique : {current_stock}")
                             else:
-                                st.error("Stock insuffisant !")
+                                st.caption(f"Stock dispo : {current_stock}")
 
-                        # --- BOUTON ANNULER (ROUGE) ---
-                        if col_btn_cancel.button("❌ ANNULER", key=f"can_{order['id']}"):
-                            try:
-                                # On change juste le statut, ON NE TOUCHE PAS AU STOCK
-                                supabase.table("orders").update({
-                                    "status": "Annulé (Client)"
-                                }).eq("id", order['id']).execute()
-                                st.warning("Commande annulée.")
+                        with c2:
+                            st.write(f"**Client:** {order['customer_phone']}")
+                            st.write(f"**Source:** :blue[{order['marketing_source']}]")
+                            st.caption(f"Date: {order['created_at'].strftime('%d/%m %H:%M')}")
+                        
+                        with c3:
+                            col_val, col_can = st.columns(2)
+                            if col_val.button("✅ LIVRÉ", key=f"v_{order['id']}", type="primary"):
+                                if current_stock >= qty_sold:
+                                    supabase.table("inventory").update({"quantity": current_stock - qty_sold}).eq("id", order['product_id']).execute()
+                                    supabase.table("orders").update({"status": "Livré", "unit_buy_cost_at_sale": buy_price}).eq("id", order['id']).execute()
+                                    st.toast("Validé !")
+                                    st.rerun()
+                                else:
+                                    st.error("Stock insuffisant")
+
+                            if col_can.button("❌ ANNULER", key=f"c_{order['id']}"):
+                                supabase.table("orders").update({"status": "Annulé (Client)"}).eq("id", order['id']).execute()
                                 st.rerun()
-                            except Exception as e:
-                                st.error(f"Erreur: {e}")
-                                
+
+        # --- CONTENU ONGLET HISTORIQUE ---
+        with tab_history:
+            st.write("Dernières commandes terminées")
+            # On affiche un tableau propre pour l'historique
+            st.dataframe(
+                completed_orders[['created_at', 'order_ref', 'customer_phone', 'product_id', 'total_amount_cfa', 'status', 'marketing_source']],
+                column_config={
+                    "created_at": st.column_config.DatetimeColumn("Date", format="D MMM, HH:mm"),
+                    "order_ref": "Réf",
+                    "customer_phone": "Client",
+                    "product_id": "Code Produit",
+                    "total_amount_cfa": st.column_config.NumberColumn("Montant", format="%d CFA"),
+                    "status": "Etat",
+                    "marketing_source": "Source"
+                },
+                use_container_width=True,
+                height=400
+            )
+
     # --- ONGLET 2 : VENTE MANUELLE (Ton ancien code) ---
     with tab_manual:
         df_inv = get_inventory()
