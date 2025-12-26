@@ -461,7 +461,6 @@ elif page == "🤖 Assistant IA":
     st.header("Ton Assistant Intelligent (Propulsé par Gemini) 💎")
     
     # Configuration de la clé API
-    # Ajoute ta clé dans .streamlit/secrets.toml sous [gemini] api_key = "..."
     if "gemini" in st.secrets:
         genai.configure(api_key=st.secrets["gemini"]["api_key"])
     else:
@@ -488,7 +487,6 @@ elif page == "🤖 Assistant IA":
                         columns_info = list(df_orders.columns)
                         sample_data = df_orders.head(3).to_markdown()
                         
-                        # Prompt spécifique pour Gemini
                         prompt = f"""
                         Tu es un expert en Data Science Python (Pandas/Plotly).
                         Tu as accès à une DataFrame nommée 'df'.
@@ -506,11 +504,11 @@ elif page == "🤖 Assistant IA":
                         5. La variable de données s'appelle 'df'.
                         """
                         
-                        # 2. Appel à Gemini Pro
-                        model = genai.GenerativeModel('gemini-1.5-flash') # Modèle rapide et gratuit
+                        # 2. Appel à Gemini (VERSION CORRIGÉE ICI 👇)
+                        model = genai.GenerativeModel('gemini-1.5-flash-001') 
                         response = model.generate_content(prompt)
                         
-                        # 3. Nettoyage du code (Gemini aime bien mettre des ``` parfois)
+                        # 3. Nettoyage
                         generated_code = response.text.replace("```python", "").replace("```", "").strip()
                         
                         st.code(generated_code, language="python")
@@ -522,7 +520,7 @@ elif page == "🤖 Assistant IA":
                         
                     except Exception as e:
                         st.error(f"Erreur : {e}")
-                        st.caption("Conseil : Sois plus précis dans ta demande.")
+                        st.caption("Si l'erreur persiste, vérifie ta clé API ou essaie une question plus simple.")
 
     # --- CERVEAU 2 : LE MARKETEUR (Content Gen) ---
     with tab_cmo:
@@ -539,7 +537,6 @@ elif page == "🤖 Assistant IA":
             "humour (Ivoirien)"
         ])
         
-        # Champ optionnel pour Perplexity
         context_perplexity = st.text_area("Info Perplexity (Optionnel)", placeholder="Colle ici une info trouvée sur Perplexity (ex: Tendance TikTok du moment...)")
 
         if st.button("Génère le script ✨"):
@@ -561,7 +558,8 @@ elif page == "🤖 Assistant IA":
                 if context_perplexity:
                     base_prompt += f"\nIntègre cette tendance/info : {context_perplexity}"
 
-                model = genai.GenerativeModel('gemini-1.5-pro') # Modèle plus créatif
+                # (VERSION CORRIGÉE ICI 👇)
+                model = genai.GenerativeModel('gemini-1.5-pro-001') 
                 response_market = model.generate_content(base_prompt)
                 
                 st.markdown(response_market.text)
